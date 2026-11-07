@@ -64,6 +64,15 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
 #define OPSAMPCOUNT 960
 
+static inline void modchs(float *left, float *right, unsigned long duration)
+{
+    for (unsigned long i = 0; i < duration; i++)
+    {
+        if (left) left[i] = adjf(left[i], ampmod) * volmod;
+        if (right) right[i] = adjf(right[i], ampmod) * volmod;
+    }
+}
+
 unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long position, unsigned long duration, unsigned long rate, unsigned long long nsectime)
 {
     static bool quitnextcycle = false;
@@ -100,15 +109,16 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     while (outbuffidx < duration)
     {
         static float freshbuff[OPSAMPCOUNT * 2];
-        int c = op_read_float_stereo(f, freshbuff, OPSAMPCOUNT * 2);
-        if (!c) { lapi->log(DSPLogLevel_Info, "reached end of file, exitting..."); goto errorquit; }
-        else if (c < 0)
+        int ret = op_read_float_stereo(f, freshbuff, OPSAMPCOUNT * 2);
+        if (!ret) { lapi->log(DSPLogLevel_Info, "reached end of file, exitting..."); goto errorquit; }
+        else if (ret < 0)
         { lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down..."); goto errorquit; }
 
-        for (size_t freshbuffidx = 0; freshbuffidx < c * 2; freshbuffidx += 2)
+        for (unsigned long freshbuffidx = 0; freshbuffidx < (unsigned long)(ret << 1); freshbuffidx += 2)
         {
             float l = freshbuff[freshbuffidx];
             float r = freshbuff[freshbuffidx + 1];
+            
             if (outbuffidx < duration)
             {
                 if (left) left[outbuffidx] = l;
@@ -120,18 +130,12 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
                 queuebuffleft[queuelen] = l;
                 queuebuffright[queuelen] = r;
                 queuelen++;
-                queueidx = 0;
             }
         }
     }
     queueflushed:
 
-    for (unsigned long i = 0; i < duration; i++)
-    {
-        if (left) left[i] = adjf(left[i], ampmod) * volmod;
-        if (right) right[i] = adjf(right[i], ampmod) * volmod;
-    }
-
+    modchs(left, right, duration);
     return 0;
 
     errorquit:
@@ -140,12 +144,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
             if (left) memset(left + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
             if (right) memset(right + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
         }
-        for (unsigned long i = 0; i < duration; i++)
-        {
-            if (left) left[i] = adjf(left[i], ampmod) * volmod;
-            if (right) right[i] = adjf(right[i], ampmod) * volmod;
-        }
-        
+    modchs(left, right, duration);
     quitnextcycle = true;
     return 0;
 }
