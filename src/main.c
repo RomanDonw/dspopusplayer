@@ -17,13 +17,14 @@ const unsigned short dspmodule_requiredAPIversion = 3;
 static OggOpusFile *f;
 static void *leftport, *rightport;
 static float ampmod = 0, volmod = 0.1;
+static int repeat = 0;
 
 unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * const argv[], const char **sysname, const char **dispname)
 {
     const char *filepath = NULL;
     {
         int opt;
-        while ((opt = getopt(argc, argv, "f:a:v:")) != -1)
+        while ((opt = getopt(argc, argv, "f:a:v:r:")) != -1)
         {
             switch (opt)
             {
@@ -37,6 +38,11 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
                 case 'v':
                     if (sscanf(optarg, "%f", &volmod) < 1) goto parsefltoptfail;
+                    break;
+
+                case 'r':
+                    if (sscanf(optarg, "%d", &repeat) < 1)
+                    { lapi->log(DSPLogLevel_Fatal, "failed to parse option -r"); return 1; }
                     break;
 
                 parsefltoptfail:
@@ -58,6 +64,8 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
     if (!(rightport = lapi->addport(portname, NULL, DSPPortDirection_Output, 0))) goto addportfail;
 
     lapi->log(DSPLogLevel_Info, "filepath: %s\nampmod: %f\nvolmod: %f", filepath, ampmod, volmod);
+    if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
+    else lapi->log(DSPLogLevel_Info, "repeat: %u times", repeat);
     *sysname = "dspopusplayer";
     *dispname = "Opus Player";
     return 0;
@@ -93,6 +101,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     static float queuebuffleft[OPSAMPCOUNT], queuebuffright[OPSAMPCOUNT];
     static unsigned long queueidx = 0, queuelen = 0;
     unsigned long outbuffidx = 0;
+    static unsigned long repeatcounter = 0;
 
     if (queuelen)
     {
@@ -116,7 +125,17 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     {
         static float freshbuff[OPSAMPCOUNT * 2];
         int ret = op_read_float_stereo(f, freshbuff, OPSAMPCOUNT * 2);
-        if (!ret) { lapi->log(DSPLogLevel_Info, "reached end of file, exitting..."); goto errorquit; }
+        if (!ret)
+        {
+            if (repeat < 0 || repeatcounter++ < repeat)
+            {
+                if (op_pcm_seek(f, 0))
+                { lapi->log(DSPLogLevel_Fatal, "failed to seek to start of the file"); goto errorquit; }
+                continue;
+            }
+            lapi->log(DSPLogLevel_Info, "reached end of file, exitting...");
+            goto errorquit;
+        }
         else if (ret < 0)
         { lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down..."); goto errorquit; }
 
