@@ -94,7 +94,7 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
     lapi->log(DSPLogLevel_Info, "path: %s\nampmod: %f\nvolmod: %f", path, ampmod, volmod);
     if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
-    else lapi->log(DSPLogLevel_Info, "repeat: %u times", repeat);
+    else lapi->log(DSPLogLevel_Info, "repeat: %u times", (unsigned int)repeat);
     *sysname = "dspopusplayer";
     *dispname = "Opus Player";
     return 0;
@@ -138,8 +138,9 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
         {
             if (left) memcpy(left, queuebuffleft + queueidx, duration * sizeof(float));
             if (right) memcpy(right, queuebuffright + queueidx, duration * sizeof(float));
-            queueidx += duration;
             queuelen -= duration;
+            if (queuelen) queueidx += duration;
+            else queueidx = 0;
             goto queueflushed;
         }
         
