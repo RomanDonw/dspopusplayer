@@ -93,8 +93,14 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
     if (!(rightport = lapi->addport(portname, NULL, DSPPortDirection_Output, 0))) goto addportfail;
 
     lapi->log(DSPLogLevel_Info, "path: %s\nampmod: %f\nvolmod: %f", path, ampmod, volmod);
-    if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
-    else lapi->log(DSPLogLevel_Info, "repeat: %u times", (unsigned int)repeat);
+    if (op_seekable(f))
+    {
+        if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
+        else lapi->log(DSPLogLevel_Info, "repeat: %u times", (unsigned int)repeat);
+    }
+    else if (repeat)
+    { lapi->log(DSPLogLevel_Warning, "repeating is not allowed for endless streams"); repeat = 0; }
+    
     *sysname = "dspopusplayer";
     *dispname = "Opus Player";
     return 0;
@@ -166,6 +172,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
             lapi->log(DSPLogLevel_Info, "reached end of file/stream, exitting...");
             goto errorquit;
         }
+        else if (ret == OP_HOLE) goto handlestreamhole;
         else if (ret < 0)
         { lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down..."); goto errorquit; }
 
@@ -194,13 +201,14 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     return 0;
 
     errorquit:
+        quitnextcycle = true;
+    handlestreamhole:
         if (outbuffidx < duration)
         {
             if (left) memset(left + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
             if (right) memset(right + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
         }
     modchs(left, right, duration);
-    quitnextcycle = true;
     return 0;
 }
 
