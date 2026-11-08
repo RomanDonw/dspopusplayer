@@ -19,17 +19,28 @@ static void *leftport, *rightport;
 static float ampmod = 0, volmod = 0.1;
 static int repeat = 0;
 
+enum sourcetype
+{
+    STYPE_NONE = 0,
+    STYPE_FILE = 1,
+    STYPE_URL = 2
+} typedef sourcetype;
+static sourcetype stype = STYPE_NONE;
+
 unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * const argv[], const char **sysname, const char **dispname)
 {
-    const char *filepath = NULL;
+    const char *path = NULL;
     {
         int opt;
-        while ((opt = getopt(argc, argv, "f:a:v:r:")) != -1)
+        while ((opt = getopt(argc, argv, "f:a:v:r:u:")) != -1)
         {
             switch (opt)
             {
                 case 'f':
-                    filepath = optarg;
+                    if (stype == STYPE_URL)
+                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: URL"); return 1; }
+                    stype = STYPE_FILE;
+                    path = optarg;
                     break;
 
                 case 'a':
@@ -45,6 +56,13 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
                     { lapi->log(DSPLogLevel_Fatal, "failed to parse option -r"); return 1; }
                     break;
 
+                case 'u':
+                    if (stype == STYPE_FILE)
+                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: file"); return 1; }
+                    stype = STYPE_URL;
+                    path = optarg;
+                    break;
+
                 parsefltoptfail:
                     lapi->log(DSPLogLevel_Fatal, "failed parsing option -%c (required float)", (char)opt);
                 return 1;
@@ -52,18 +70,29 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
         }
     }
 
-    if (!filepath)
-    { lapi->log(DSPLogLevel_Fatal, "pass path to Opus-encoded audio file through -f option"); return 1; }
+    switch (stype)
+    {
+        case STYPE_FILE:
+            if (!(f = op_open_file(path, NULL)))
+            { lapi->log(DSPLogLevel_Fatal, "unable to open file %s", path); return 1; }
+            break;
 
-    if (!(f = op_open_file(filepath, NULL)))
-    { lapi->log(DSPLogLevel_Fatal, "unable to open file"); return 1; }
+        case STYPE_URL:
+            if (!(f = op_open_url(path, NULL, NULL)))
+            { lapi->log(DSPLogLevel_Fatal, "unable to open URL %s", path); return 1; }
+            break;
+
+        default:
+            lapi->log(DSPLogLevel_Fatal, "specify path to Opus-encoded audio file or stream URL through -f or -u option respectively");
+            return 1;
+    }
 
     const char *portname = "left";
     if (!(leftport = lapi->addport(portname, NULL, DSPPortDirection_Output, 0))) goto addportfail;
     portname = "right";
     if (!(rightport = lapi->addport(portname, NULL, DSPPortDirection_Output, 0))) goto addportfail;
 
-    lapi->log(DSPLogLevel_Info, "filepath: %s\nampmod: %f\nvolmod: %f", filepath, ampmod, volmod);
+    lapi->log(DSPLogLevel_Info, "path: %s\nampmod: %f\nvolmod: %f", path, ampmod, volmod);
     if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
     else lapi->log(DSPLogLevel_Info, "repeat: %u times", repeat);
     *sysname = "dspopusplayer";
@@ -100,8 +129,8 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
 
     static float queuebuffleft[OPSAMPCOUNT], queuebuffright[OPSAMPCOUNT];
     static unsigned long queueidx = 0, queuelen = 0;
-    unsigned long outbuffidx = 0;
     static unsigned long repeatcounter = 0;
+    unsigned long outbuffidx = 0;
 
     if (queuelen)
     {
@@ -130,10 +159,10 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
             if (repeat < 0 || repeatcounter++ < repeat)
             {
                 if (op_pcm_seek(f, 0))
-                { lapi->log(DSPLogLevel_Fatal, "failed to seek to start of the file"); goto errorquit; }
+                { lapi->log(DSPLogLevel_Fatal, "failed seeking to start of the file/stream"); goto errorquit; }
                 continue;
             }
-            lapi->log(DSPLogLevel_Info, "reached end of file, exitting...");
+            lapi->log(DSPLogLevel_Info, "reached end of file/stream, exitting...");
             goto errorquit;
         }
         else if (ret < 0)
@@ -143,7 +172,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
         {
             float l = freshbuff[freshbuffidx];
             float r = freshbuff[freshbuffidx + 1];
-            
+
             if (outbuffidx < duration)
             {
                 if (left) left[outbuffidx] = l;
