@@ -12,6 +12,8 @@
 #include <getopt.h>
 #include <opus/opusfile.h>
 
+#include "err.h"
+
 const unsigned short dspmodule_requiredAPIversion = 3;
 
 static OggOpusFile *f;
@@ -72,14 +74,16 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
     switch (stype)
     {
+        int err;
+
         case STYPE_FILE:
-            if (!(f = op_open_file(path, NULL)))
-            { lapi->log(DSPLogLevel_Fatal, "unable to open file %s", path); return 1; }
+            if (!(f = op_open_file(path, &err)))
+            { lapi->log(DSPLogLevel_Fatal, "unable to open file \"%s\": %s", path, stropuserror(err)); return 1; }
             break;
 
         case STYPE_URL:
-            if (!(f = op_open_url(path, NULL, NULL)))
-            { lapi->log(DSPLogLevel_Fatal, "unable to open URL %s", path); return 1; }
+            if (!(f = op_open_url(path, &err, NULL)))
+            { lapi->log(DSPLogLevel_Fatal, "unable to open URL \"%s\": %s", path, stropuserror(err)); return 1; }
             break;
 
         default:
@@ -111,8 +115,6 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
     return 1;
 }
 
-#define OPSAMPCOUNT 960
-
 static inline void modchs(float *left, float *right, unsigned long duration)
 {
     for (unsigned long i = 0; i < duration; i++)
@@ -121,6 +123,8 @@ static inline void modchs(float *left, float *right, unsigned long duration)
         if (right) right[i] = adjf(right[i], ampmod) * volmod;
     }
 }
+
+#define OPFRAMESIZE 960
 
 unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long position, unsigned long duration, unsigned long rate, unsigned long long nsectime)
 {
@@ -133,7 +137,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     float *left = lapi->getportbuffer(leftport, duration);
     float *right = lapi->getportbuffer(rightport, duration);
 
-    static float queuebuffleft[OPSAMPCOUNT], queuebuffright[OPSAMPCOUNT];
+    static float queuebuffleft[OPFRAMESIZE], queuebuffright[OPFRAMESIZE];
     static unsigned long queueidx = 0, queuelen = 0;
     static unsigned long repeatcounter = 0;
     unsigned long outbuffidx = 0;
@@ -159,14 +163,19 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
 
     while (outbuffidx < duration)
     {
-        static float freshbuff[OPSAMPCOUNT * 2];
-        int ret = op_read_float_stereo(f, freshbuff, OPSAMPCOUNT * 2);
+        static float freshbuff[OPFRAMESIZE * 2];
+        int ret = op_read_float_stereo(f, freshbuff, OPFRAMESIZE * 2);
         if (!ret)
         {
             if (repeat < 0 || repeatcounter++ < repeat)
             {
-                if (op_pcm_seek(f, 0))
-                { lapi->log(DSPLogLevel_Fatal, "failed seeking to start of the file/stream"); goto errorquit; }
+                int err = op_pcm_seek(f, 0);
+                if (err)
+                {
+                    lapi->log(DSPLogLevel_Fatal, "failed seeking to start of the file/stream: %s",
+                        stropuserror(err));
+                    goto errorquit;
+                }
                 continue;
             }
             lapi->log(DSPLogLevel_Info, "reached end of file/stream, exitting...");
@@ -174,7 +183,11 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
         }
         else if (ret == OP_HOLE) goto handlestreamhole;
         else if (ret < 0)
-        { lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down..."); goto errorquit; }
+        {
+            lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down...\nerror code: %s",
+                stropuserror(ret));
+            goto errorquit;
+        }
 
         for (unsigned long freshbuffidx = 0; freshbuffidx < (unsigned long)(ret << 1); freshbuffidx += 2)
         {
