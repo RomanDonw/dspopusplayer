@@ -14,7 +14,7 @@
 
 #include "err.h"
 
-const unsigned short dspmodule_requiredAPIversion = 3;
+const unsigned short dspmodule_requiredAPIversion = 4;
 
 static OggOpusFile *f;
 static void *leftport, *rightport;
@@ -29,18 +29,18 @@ enum sourcetype
 } typedef sourcetype;
 static sourcetype stype = STYPE_NONE;
 
-unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * const argv[], const char **sysname, const char **dispname)
+DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPModuleStartupFunctionOptions * restrict opts)
 {
     const char *path = NULL;
     {
         int opt;
-        while ((opt = getopt(argc, argv, "f:a:v:r:u:")) != -1)
+        while ((opt = getopt(opts->argc, opts->argv, "f:a:v:r:u:")) != -1)
         {
             switch (opt)
             {
                 case 'f':
                     if (stype == STYPE_URL)
-                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: URL"); return 1; }
+                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: URL"); return DSPModuleReturnCode_Stop; }
                     stype = STYPE_FILE;
                     path = optarg;
                     break;
@@ -55,19 +55,19 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
                 case 'r':
                     if (sscanf(optarg, "%d", &repeat) < 1)
-                    { lapi->log(DSPLogLevel_Fatal, "failed to parse option -r"); return 1; }
+                    { lapi->log(DSPLogLevel_Fatal, "failed to parse option -r"); return DSPModuleReturnCode_Stop; }
                     break;
 
                 case 'u':
                     if (stype == STYPE_FILE)
-                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: file"); return 1; }
+                    { lapi->log(DSPLogLevel_Fatal, "already selected source type: file"); return DSPModuleReturnCode_Stop; }
                     stype = STYPE_URL;
                     path = optarg;
                     break;
 
                 parsefltoptfail:
                     lapi->log(DSPLogLevel_Fatal, "failed parsing option -%c (required float)", (char)opt);
-                return 1;
+                return DSPModuleReturnCode_Stop;
             }
         }
     }
@@ -78,17 +78,17 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
 
         case STYPE_FILE:
             if (!(f = op_open_file(path, &err)))
-            { lapi->log(DSPLogLevel_Fatal, "unable to open file \"%s\": %s", path, stropuserror(err)); return 1; }
+            { lapi->log(DSPLogLevel_Fatal, "unable to open file \"%s\": %s", path, stropuserror(err)); return DSPModuleReturnCode_Stop; }
             break;
 
         case STYPE_URL:
             if (!(f = op_open_url(path, &err, NULL)))
-            { lapi->log(DSPLogLevel_Fatal, "unable to open URL \"%s\": %s", path, stropuserror(err)); return 1; }
+            { lapi->log(DSPLogLevel_Fatal, "unable to open URL \"%s\": %s", path, stropuserror(err)); return DSPModuleReturnCode_Stop; }
             break;
 
         default:
             lapi->log(DSPLogLevel_Fatal, "specify path to Opus-encoded audio file or stream URL through -f or -u option respectively");
-            return 1;
+            return DSPModuleReturnCode_Stop;
     }
 
     const char *portname = "left";
@@ -105,14 +105,14 @@ unsigned short dspmodule_startup(const DSPLoaderAPI *lapi, int argc, char * cons
     else if (repeat)
     { lapi->log(DSPLogLevel_Warning, "repeating is not allowed for endless streams"); repeat = 0; }
     
-    *sysname = "dspopusplayer";
-    *dispname = "Opus Player";
-    return 0;
+    opts->sysname = "dspopusplayer";
+    opts->dispname = "Opus Player";
+    return DSPModuleReturnCode_Continue;
 
     addportfail:
         lapi->log(DSPLogLevel_Fatal, "failed adding output port %s", portname);
         op_free(f);
-    return 1;
+    return DSPModuleReturnCode_Stop;
 }
 
 static inline void modchs(float *left, float *right, unsigned long duration)
@@ -126,16 +126,16 @@ static inline void modchs(float *left, float *right, unsigned long duration)
 
 #define OPFRAMESIZE 960
 
-unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long position, unsigned long duration, unsigned long rate, unsigned long long nsectime)
+DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPModuleProcessFunctionOptions * restrict opts)
 {
     static bool quitnextcycle = false;
-    if (quitnextcycle) return 1;
+    if (quitnextcycle) return DSPModuleReturnCode_Stop;
 
-    if (rate != 48000)
-    { lapi->log(DSPLogLevel_Error, "graph sample rate doesnt match 48000 (got %lu), shutting down...", rate); return 1; }
+    if (opts->rate != 48000)
+    { lapi->log(DSPLogLevel_Error, "graph sample rate doesnt match 48000 (got %lu), shutting down...", opts->rate); return DSPModuleReturnCode_Stop; }
 
-    float *left = lapi->getportbuffer(leftport, duration);
-    float *right = lapi->getportbuffer(rightport, duration);
+    float *left = lapi->getportbuffer(leftport, opts->duration);
+    float *right = lapi->getportbuffer(rightport, opts->duration);
 
     static float queuebuffleft[OPFRAMESIZE], queuebuffright[OPFRAMESIZE];
     static unsigned long queueidx = 0, queuelen = 0;
@@ -144,12 +144,12 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
 
     if (queuelen)
     {
-        if (duration <= queuelen)
+        if (opts->duration <= queuelen)
         {
-            if (left) memcpy(left, queuebuffleft + queueidx, duration * sizeof(float));
-            if (right) memcpy(right, queuebuffright + queueidx, duration * sizeof(float));
-            queuelen -= duration;
-            if (queuelen) queueidx += duration;
+            if (left) memcpy(left, queuebuffleft + queueidx, opts->duration * sizeof(float));
+            if (right) memcpy(right, queuebuffright + queueidx, opts->duration * sizeof(float));
+            queuelen -= opts->duration;
+            if (queuelen) queueidx += opts->duration;
             else queueidx = 0;
             goto queueflushed;
         }
@@ -161,7 +161,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
         queueidx = 0;
     }
 
-    while (outbuffidx < duration)
+    while (outbuffidx < opts->duration)
     {
         static float freshbuff[OPFRAMESIZE * 2];
         int ret = op_read_float_stereo(f, freshbuff, OPFRAMESIZE * 2);
@@ -194,7 +194,7 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
             float l = freshbuff[freshbuffidx];
             float r = freshbuff[freshbuffidx + 1];
 
-            if (outbuffidx < duration)
+            if (outbuffidx < opts->duration)
             {
                 if (left) left[outbuffidx] = l;
                 if (right) right[outbuffidx] = r;
@@ -210,22 +210,22 @@ unsigned short dspmodule_process(const DSPLoaderAPI *lapi, unsigned long long po
     }
     queueflushed:
 
-    modchs(left, right, duration);
-    return 0;
+    modchs(left, right, opts->duration);
+    return DSPModuleReturnCode_Continue;
 
     errorquit:
         quitnextcycle = true;
     handlestreamhole:
-        if (outbuffidx < duration)
+        if (outbuffidx < opts->duration)
         {
-            if (left) memset(left + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
-            if (right) memset(right + outbuffidx, 0, (duration - outbuffidx) * sizeof(float));
+            if (left) memset(left + outbuffidx, 0, (opts->duration - outbuffidx) * sizeof(float));
+            if (right) memset(right + outbuffidx, 0, (opts->duration - outbuffidx) * sizeof(float));
         }
-    modchs(left, right, duration);
-    return 0;
+    modchs(left, right, opts->duration);
+    return DSPModuleReturnCode_Continue;
 }
 
-void dspmodule_cleanup(void)
+void dspmodule_cleanup(DSPModuleCleanupFunctionOptions * restrict opts)
 {
     op_free(f);
 }
