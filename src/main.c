@@ -104,7 +104,7 @@ DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPMod
     }
     else if (repeat)
     { lapi->log(DSPLogLevel_Warning, "repeating is not allowed for endless streams"); repeat = 0; }
-    
+
     opts->sysname = "dspopusplayer";
     opts->dispname = "Opus Player";
     return DSPModuleReturnCode_Continue;
@@ -132,7 +132,7 @@ DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPMod
     if (quitnextcycle) return DSPModuleReturnCode_Stop;
 
     if (opts->rate != 48000)
-    { lapi->log(DSPLogLevel_Error, "graph sample rate doesnt match 48000 (got %lu), shutting down...", opts->rate); return DSPModuleReturnCode_Stop; }
+    { lapi->log(DSPLogLevel_Error, "node sample rate doesnt match 48000 (got %lu), shutting down...", opts->rate); return DSPModuleReturnCode_Stop; }
 
     float *left = lapi->getportbuffer(leftport, opts->duration);
     float *right = lapi->getportbuffer(rightport, opts->duration);
