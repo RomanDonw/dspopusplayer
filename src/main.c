@@ -107,6 +107,7 @@ DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPMod
 
     opts->sysname = "dspopusplayer";
     opts->dispname = "Opus Player";
+    opts->forcerate = 48000;
     return DSPModuleReturnCode_Continue;
 
     addportfail:
