@@ -10,5 +10,5 @@
 Negative values enable infinite looping. Positive values plays once time plus repeats N time over. Zero means no repeating and playing only once time.
 
 ## Dependencies
-- [loaddsp](https://codeberg.org/RomanDonw/loaddsp).
+- [loaddsp](https://github.com/RomanDonw/loaddsp).
 - libopusfile.
