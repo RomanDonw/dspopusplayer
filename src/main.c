@@ -20,6 +20,7 @@ static OggOpusFile *f;
 static void *leftport, *rightport;
 static float ampmod = 0, volmod = 0.1;
 static int repeat = 0;
+static bool logholes = false;
 
 enum sourcetype
 {
@@ -34,7 +35,7 @@ DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPMod
     const char *path = NULL;
     {
         int opt;
-        while ((opt = getopt(opts->argc, opts->argv, "f:a:v:r:u:")) != -1)
+        while ((opt = getopt(opts->argc, opts->argv, "f:a:v:r:u:l")) != -1)
         {
             switch (opt)
             {
@@ -63,6 +64,10 @@ DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPMod
                     { lapi->log(DSPLogLevel_Fatal, "already selected source type: file"); return DSPModuleReturnCode_Stop; }
                     stype = STYPE_URL;
                     path = optarg;
+                    break;
+
+                case 'l':
+                    logholes = true;
                     break;
 
                 parsefltoptfail:
@@ -96,7 +101,7 @@ DSPModuleReturnCode dspmodule_startup(const DSPLoaderAPI * restrict lapi, DSPMod
     portname = "right";
     if (!(rightport = lapi->addport(portname, NULL, DSPPortDirection_Output, 0))) goto addportfail;
 
-    lapi->log(DSPLogLevel_Info, "path: %s\nampmod: %f\nvolmod: %f", path, ampmod, volmod);
+    lapi->log(DSPLogLevel_Info, "path: %s\nampmod: %f\nvolmod: %f\nlog stream holes: %s", path, ampmod, volmod, logholes ? "true" : "false");
     if (op_seekable(f))
     {
         if (repeat < 0) lapi->log(DSPLogLevel_Info, "repeat: forever");
@@ -182,7 +187,11 @@ DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPMod
             lapi->log(DSPLogLevel_Info, "reached end of file/stream, exitting...");
             goto errorquit;
         }
-        else if (ret == OP_HOLE) goto handlestreamhole;
+        else if (ret == OP_HOLE)
+        {
+            if (logholes) lapi->log(DSPLogLevel_Warning, "detected stream page lost (data hole), filling remaining data with zeros...");
+            goto handlestreamhole;
+        }
         else if (ret < 0)
         {
             lapi->log(DSPLogLevel_Error, "caused Opus decoder error while processing a cycle, shutting down...\nerror code: %s",
