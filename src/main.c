@@ -134,8 +134,8 @@ static inline void modchs(float *left, float *right, unsigned long duration)
 
 DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPModuleProcessFunctionOptions * restrict opts)
 {
-    static bool quitnextcycle = false;
-    if (quitnextcycle) return DSPModuleReturnCode_Stop;
+    static DSPModuleReturnCode quitnextcycle = DSPModuleReturnCode_Continue;
+    if (quitnextcycle != DSPModuleReturnCode_Continue) return quitnextcycle;
 
     if (opts->rate != 48000)
     { lapi->log(DSPLogLevel_Error, "node sample rate doesnt match 48000 (got %lu), shutting down...", opts->rate); return DSPModuleReturnCode_Stop; }
@@ -178,19 +178,19 @@ DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPMod
                 int err = op_pcm_seek(f, 0);
                 if (err)
                 {
-                    lapi->log(DSPLogLevel_Fatal, "failed seeking to start of the file/stream: %s",
-                        stropuserror(err));
+                    lapi->log(DSPLogLevel_Error, "failed seeking to start of the file/stream: %s", stropuserror(err));
                     goto errorquit;
                 }
                 continue;
             }
             lapi->log(DSPLogLevel_Info, "reached end of file/stream, exitting...");
-            goto errorquit;
+            quitnextcycle = DSPModuleReturnCode_Quit;
+            goto zeroremains;
         }
         else if (ret == OP_HOLE)
         {
             if (logholes) lapi->log(DSPLogLevel_Warning, "detected stream page lost (data hole), filling remaining data with zeros...");
-            goto handlestreamhole;
+            goto zeroremains;
         }
         else if (ret < 0)
         {
@@ -224,8 +224,8 @@ DSPModuleReturnCode dspmodule_process(const DSPLoaderAPI * restrict lapi, DSPMod
     return DSPModuleReturnCode_Continue;
 
     errorquit:
-        quitnextcycle = true;
-    handlestreamhole:
+        quitnextcycle = DSPModuleReturnCode_Stop;
+    zeroremains:
         if (outbuffidx < opts->duration)
         {
             if (left) memset(left + outbuffidx, 0, (opts->duration - outbuffidx) * sizeof(float));
